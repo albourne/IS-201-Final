@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desert Dune Sledder</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f4a460; /* SandyBrown base */ font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #633a1a; /* Darker brown for text */
+            background-color: rgba(255, 235, 205, 0.75); /* PapayaWhip semi-transparent */
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: bold;
+            z-index: 10;
+            display: none; /* Hidden initially */
+            max-width: 250px;
+        }
+        #legend { margin-top: 10px; font-size: 0.8em; font-weight: normal; line-height: 1.6; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 2px; }
+        .legend-color { width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; border: 1px solid rgba(0,0,0,0.2); }
+
+        #start-screen, #game-over {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(244, 164, 96, 0.9); /* SandyBrown overlay */
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #633a1a; font-size: 2em; font-weight: bold; text-align: center;
+            z-index: 20;
+        }
+        #game-over { display: none; background-color: rgba(255, 228, 225, 0.9); color: #dc143c; }
+        #start-screen h1 { margin-bottom: 10px; font-size: 2.5em; text-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+        #start-screen h2 { margin-bottom: 25px; font-size: 1.2em; font-weight: normal; } /* Subtitle for difficulty */
+
+        #difficulty-buttons { display: none; }
+
+        .difficulty-button, #game-over button {
+            margin: 10px; padding: 15px 30px; font-size: 0.8em; cursor: pointer;
+            background-color: #8b4513; color: white; border: none; border-radius: 8px;
+            transition: background-color 0.3s, transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .difficulty-button:hover, #game-over button:hover { background-color: #a0522d; }
+        .difficulty-button:active, #game-over button:active { transform: scale(0.98); }
+
+        #loading-message { font-size: 0.6em; margin-top: 30px; }
+        .game-stat { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <div class="game-stat">Score: <span id="score">0</span></div>
+        <div class="game-stat">Lives: <span id="lives">1</span></div>
+        <div class="game-stat">Distance: <span id="distance">0</span> m</div>
+        <div id="legend">
+            <strong>Legend:</strong>
+            <div class="legend-item"><span class="legend-color" style="background-color: #00ff00;"></span> Coin</div>
+            <div class="legend-item"><span class="legend-color" style="background-color: #0077ff;"></span> Water (+Life)</div>
+            <div class="legend-item"><span class="legend-color" style="background-color: #d2691e;"></span> Camel (Skip)</div>
+            <div class="legend-item"><span class="legend-color" style="background-color: #5a2d0c;"></span> Scorpion</div>
+            <div class="legend-item"><span class="legend-color" style="background-color: #8B0000;"></span> Snake</div>
+        </div>
+    </div>
+
+    <div id="start-screen">
+        <h1>Desert Dune Sledder</h1>
+        <h2>Select Difficulty:</h2>
+        <div id="difficulty-buttons">
+            <button class="difficulty-button" data-difficulty="easy">Easy</button>
+            <button class="difficulty-button" data-difficulty="medium">Medium</button>
+            <button class="difficulty-button" data-difficulty="hard">Hard</button>
+        </div>
+        <p id="loading-message">Loading...</p>
+    </div>
+
+    <div id="game-over">
+        Game Over!
+        <br>
+        <span id="error-message" style="font-size: 0.6em; color: red; display: none;"></span>
+        Final Score: <span id="final-score">0</span>
+        <br>
+        Distance: <span id="final-distance">0</span> m
+        <br>
+        <button id="restart-button">Restart</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // --- Basic Setup ---
+        let scene, camera, renderer;
+        let playerSled, playerCollider, playerGroup;
+        let groundSegments = [];
+        let obstacles = [];
+        let collectibles = [];
+        // Difficulty-related variables (initialized in resetGame)
+        let baseGameSpeed;
+        let currentObjectSpawnProbability;
+        let obstacleRatio;
+        let gameSpeed; // Current speed, increases over time
+        // Other state variables
+        let score = 0;
+        let lives = 1;
+        let distanceTraveled = 0;
+        let isGameOver = true;
+        let isGameRunning = false;
+        let clock = new THREE.Clock();
+        let currentDifficulty = 'medium';
+        let animationFrameId = null;
+
+        // --- Difficulty Settings (Initial values) ---
+        const difficultySettings = {
+            easy:   { speed: 0.25, spawnProb: 0.70, obsRatio: 0.35 },
+            medium: { speed: 0.35, spawnProb: 0.80, obsRatio: 0.45 },
+            hard:   { speed: 0.45, spawnProb: 0.90, obsRatio: 0.55 }
+        };
+        // --- Progressive Difficulty Caps ---
+        const MAX_SPAWN_PROB = 0.98; // Don't let spawn prob exceed this
+        const MAX_OBSTACLE_RATIO = 0.80; // Don't let obstacle ratio exceed this
+        // --- Progressive Difficulty Increase Rates (per second) ---
+        const SPAWN_PROB_INCREASE_RATE = 0.0015; // Tune this value
+        const OBSTACLE_RATIO_INCREASE_RATE = 0.0010; // Tune this value
+        const SPEED_INCREASE_RATE = 0.003; // Tune this value (speed units per second)
+
+
+        // --- Game Constants ---
+        const LANE_WIDTH = 5; const LANES = [-LANE_WIDTH, 0, LANE_WIDTH]; let currentLaneIndex = 1;
+        const SEGMENT_LENGTH = 60; const SEGMENT_WIDTH_SEGMENTS = 1; const SEGMENT_LENGTH_SEGMENTS = 1;
+        const RENDER_DISTANCE = 10; const SAND_COLOR = 0xf4a460;
+
+        // --- Object Definitions ---
+        const MATS = { /* ... same ... */ scorpion: new THREE.MeshStandardMaterial({ color: 0x5a2d0c }), snake: new THREE.MeshStandardMaterial({ color: 0x8B0000 }), camel_body: new THREE.MeshStandardMaterial({ color: 0xd2691e }), camel_leg: new THREE.MeshStandardMaterial({ color: 0x8b4513 }), coin: new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x55ff55 }), water: new THREE.MeshStandardMaterial({ color: 0x0077ff, transparent: true, opacity: 0.8 }), player_sled: new THREE.MeshStandardMaterial({ color: 0x8B4513 }), player_body: new THREE.MeshStandardMaterial({ color: 0x0077cc }), player_head: new THREE.MeshStandardMaterial({ color: 0xffdbac }), };
+        const OBSTACLE_TYPES = { /* ... same ... */ SCORPION: { type: 'obstacle', createFunc: createScorpionModel }, SNAKE:    { type: 'obstacle', createFunc: createSnakeModel } };
+        const COLLECTIBLE_TYPES = { /* ... same ... */ COIN:  { type: 'coin', value: 10, createFunc: createCoinModel }, WATER: { type: 'water', value: 1, createFunc: createWaterModel }, CAMEL: { type: 'camel', value: 500, createFunc: createCamelModel } };
+        const COIN_INTERNAL_PROB = 0.75; const WATER_INTERNAL_PROB = 0.15;
+        const PLAYER_BASE_Y = 0.5;
+
+        // --- DOM Elements ---
+        const scoreElement = document.getElementById('score'); const livesElement = document.getElementById('lives'); const distanceElement = document.getElementById('distance'); const startScreen = document.getElementById('start-screen'); const gameOverElement = document.getElementById('game-over'); const finalScoreElement = document.getElementById('final-score'); const finalDistanceElement = document.getElementById('final-distance'); const difficultyButtonContainer = document.getElementById('difficulty-buttons'); const restartButton = document.getElementById('restart-button'); const loadingMessage = document.getElementById('loading-message'); const uiContainer = document.getElementById('ui-container'); const errorMessageElement = document.getElementById('error-message');
+
+        // --- Initialization Function --- // (Same as v9)
+        function init() { try { scene = new THREE.Scene(); scene.background = new THREE.Color(SAND_COLOR); scene.fog = new THREE.Fog(SAND_COLOR, SEGMENT_LENGTH * 2, SEGMENT_LENGTH * RENDER_DISTANCE * 0.8); camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); camera.position.set(0, 6, 12); camera.lookAt(0, 0, 0); renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(window.innerWidth, window.innerHeight); renderer.shadowMap.enabled = true; document.body.appendChild(renderer.domElement); const ambientLight = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambientLight); const directionalLight = new THREE.DirectionalLight(0xffffff, 0.9); directionalLight.position.set(10, 15, 10); directionalLight.castShadow = true; directionalLight.shadow.mapSize.width = 1024; directionalLight.shadow.mapSize.height = 1024; directionalLight.shadow.camera.near = 0.5; directionalLight.shadow.camera.far = 500; directionalLight.shadow.camera.left = -30; directionalLight.shadow.camera.right = 30; directionalLight.shadow.camera.top = 30; directionalLight.shadow.camera.bottom = -30; scene.add(directionalLight); playerGroup = new THREE.Group(); playerGroup.position.set(LANES[currentLaneIndex], PLAYER_BASE_Y, 0); scene.add(playerGroup); const sledGeo = new THREE.BoxGeometry(1.5, 0.3, 3); playerSled = new THREE.Mesh(sledGeo, MATS.player_sled); playerSled.position.y = 0; playerSled.castShadow = true; playerGroup.add(playerSled); const personBodyGeo = new THREE.BoxGeometry(0.6, 0.8, 0.6); const personBody = new THREE.Mesh(personBodyGeo, MATS.player_body); personBody.position.set(0, 0.3 + 0.4, -0.5); personBody.castShadow = true; playerGroup.add(personBody); const personHeadGeo = new THREE.SphereGeometry(0.3, 16, 16); const personHead = new THREE.Mesh(personHeadGeo, MATS.player_head); personHead.position.set(0, personBody.position.y + 0.4 + 0.3, -0.5); personHead.castShadow = true; playerGroup.add(personHead); playerCollider = new THREE.Box3(); updatePlayerCollider(); for (let i = 0; i < RENDER_DISTANCE; i++) { createGroundSegment(i * -SEGMENT_LENGTH); } window.addEventListener('resize', onWindowResize, false); difficultyButtonContainer.querySelectorAll('.difficulty-button').forEach(button => { button.addEventListener('click', (event) => { startGameHandler(event.target.dataset.difficulty); }); }); restartButton.addEventListener('click', () => { gameOverElement.style.display = 'none'; errorMessageElement.style.display = 'none'; startScreen.style.display = 'flex'; isGameOver = true; isGameRunning = false; stopAnimationLoop(); }); renderer.render(scene, camera); loadingMessage.style.display = 'none'; difficultyButtonContainer.style.display = 'block'; } catch (error) { console.error("CRITICAL ERROR during initialization:", error); loadingMessage.textContent = "Error during initialization. Please check console (F12)."; loadingMessage.style.color = "red"; loadingMessage.style.display = 'block'; difficultyButtonContainer.style.display = 'none'; } }
+
+        // --- Game State Functions --- // (Mostly same as v9)
+        function startGameHandler(difficulty) { try { console.log(`Starting game with difficulty: ${difficulty}`); errorMessageElement.style.display = 'none'; currentDifficulty = difficulty; startScreen.style.display = 'none'; uiContainer.style.display = 'block'; resetGame(); isGameOver = false; isGameRunning = true; startAnimationLoop(); } catch (error) { console.error("Error starting game:", error); errorMessageElement.textContent = `Error starting game: ${error.message}`; errorMessageElement.style.display = 'block'; gameOver(); } }
+        function resetGame() { try { const settings = difficultySettings[currentDifficulty]; if (!settings) throw new Error(`Invalid difficulty setting: ${currentDifficulty}`);
+            // Initialize difficulty variables for the start of the game
+            baseGameSpeed = settings.speed;
+            currentObjectSpawnProbability = settings.spawnProb;
+            obstacleRatio = settings.obsRatio;
+            gameSpeed = baseGameSpeed; // Reset current speed to base speed
+
+            score = 0; lives = 1; distanceTraveled = 0; currentLaneIndex = 1;
+            playerGroup.position.set(LANES[currentLaneIndex], PLAYER_BASE_Y, 0); playerGroup.rotation.set(0, 0, 0); playerGroup.visible = true; isFlashing = false; if(flashIntervalId) clearInterval(flashIntervalId); flashIntervalId = null; camera.position.set(playerGroup.position.x, PLAYER_BASE_Y + 7, 12); // Use updated camera Y
+            const disposeObject = (obj) => { if (!obj || !obj.group) return; try { obj.group.traverse(child => { if (child.isMesh) { if (child.geometry) child.geometry.dispose(); } }); scene.remove(obj.group); } catch(e) { console.error("Error disposing object:", e); } }; obstacles.forEach(disposeObject); collectibles.forEach(disposeObject); obstacles = []; collectibles = []; groundSegments.forEach(segment => { try { if(segment.geometry) segment.geometry.dispose(); scene.remove(segment); } catch(e) { console.error("Error disposing ground segment:", e); } }); groundSegments = []; for (let i = 0; i < RENDER_DISTANCE; i++) { createGroundSegment(i * -SEGMENT_LENGTH); } scoreElement.textContent = score; livesElement.textContent = lives; distanceElement.textContent = distanceTraveled.toFixed(0); gameOverElement.style.display = 'none'; uiContainer.style.display = 'block'; document.removeEventListener('keydown', onKeyDown, false); document.addEventListener('keydown', onKeyDown, false); } catch (error) { console.error("CRITICAL ERROR during resetGame:", error); isGameOver = true; isGameRunning = false; stopAnimationLoop(); errorMessageElement.textContent = `Error resetting game: ${error.message}`; errorMessageElement.style.display = 'block'; gameOverElement.style.display = 'flex'; uiContainer.style.display = 'none'; throw error; } }
+        function gameOver(error = null) { try { isGameOver = true; isGameRunning = false; stopAnimationLoop(); finalScoreElement.textContent = score; finalDistanceElement.textContent = distanceTraveled.toFixed(0); if (error) { console.error("Game Over due to error:", error); errorMessageElement.textContent = `Runtime Error: ${error.message}. Check console (F12).`; errorMessageElement.style.display = 'block'; } else { errorMessageElement.style.display = 'none'; } gameOverElement.style.display = 'flex'; uiContainer.style.display = 'none'; document.removeEventListener('keydown', onKeyDown, false); } catch(e) { console.error("Error executing gameOver function itself:", e); gameOverElement.style.display = 'flex'; uiContainer.style.display = 'none'; } }
+
+        // --- Model Creation Functions --- // (Unchanged)
+        function createScorpionModel() { const group = new THREE.Group(); const bodyMat = MATS.scorpion; const bodySegmentGeo = new THREE.BoxGeometry(0.5, 0.3, 0.5); for (let i = 0; i < 3; i++) { const segment = new THREE.Mesh(bodySegmentGeo, bodyMat); segment.position.z = (i - 1) * 0.45; segment.castShadow = true; group.add(segment); } const clawGeo = new THREE.BoxGeometry(0.2, 0.15, 0.4); const claw1 = new THREE.Mesh(clawGeo, bodyMat); claw1.position.set(-0.35, 0, -0.8); claw1.rotation.y = Math.PI / 6; claw1.castShadow = true; group.add(claw1); const claw2 = new THREE.Mesh(clawGeo, bodyMat); claw2.position.set(0.35, 0, -0.8); claw2.rotation.y = -Math.PI / 6; claw2.castShadow = true; group.add(claw2); const tailSegmentGeo = new THREE.BoxGeometry(0.2, 0.2, 0.3); const tailBase = new THREE.Mesh(tailSegmentGeo, bodyMat); tailBase.position.set(0, 0.1, 0.8); tailBase.castShadow = true; group.add(tailBase); const tailTip = new THREE.Mesh(tailSegmentGeo, bodyMat); tailTip.position.set(0, 0.3, 1.0); tailTip.rotation.x = Math.PI / 4; tailTip.castShadow = true; group.add(tailTip); const collider = new THREE.Box3().setFromObject(group); return { group, collider }; }
+        function createSnakeModel() { const group = new THREE.Group(); const bodyMat = MATS.snake; const segmentGeo = new THREE.BoxGeometry(0.3, 0.2, 0.6); const numSegments = 5; for (let i = 0; i < numSegments; i++) { const segment = new THREE.Mesh(segmentGeo, bodyMat); segment.position.z = (i - numSegments / 2 + 0.5) * 0.55; segment.position.x = (i % 2 === 0 ? 0.05 : -0.05); segment.castShadow = true; group.add(segment); } const collider = new THREE.Box3().setFromObject(group); return { group, collider }; }
+        function createCamelModel() { const group = new THREE.Group(); const bodyMat = MATS.camel_body; const legMat = MATS.camel_leg; const bodyGeo = new THREE.BoxGeometry(1.2, 1.3, 2.0); const body = new THREE.Mesh(bodyGeo, bodyMat); body.position.y = 0.65; body.castShadow = true; group.add(body); const humpGeo = new THREE.SphereGeometry(0.5, 16, 8); const hump1 = new THREE.Mesh(humpGeo, bodyMat); hump1.position.set(0, body.position.y + 0.5, -0.3); hump1.scale.y = 0.8; hump1.castShadow = true; group.add(hump1); const legGeo = new THREE.BoxGeometry(0.3, 1.0, 0.3); const legPositions = [ { x: -0.4, z: -0.7 }, { x: 0.4, z: -0.7 }, { x: -0.4, z: 0.7 }, { x: 0.4, z: 0.7 } ]; legPositions.forEach(pos => { const leg = new THREE.Mesh(legGeo, legMat); leg.position.set(pos.x, 0.5, pos.z); leg.castShadow = true; group.add(leg); }); const neckGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3); const neck = new THREE.Mesh(neckGeo, legMat); neck.position.set(0, body.position.y + 0.3, -1.1); neck.rotation.x = -Math.PI / 6; neck.castShadow = true; group.add(neck); const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.5); const head = new THREE.Mesh(headGeo, bodyMat); head.position.set(0, neck.position.y + 0.5, neck.position.z - 0.1); head.castShadow = true; group.add(head); const collider = new THREE.Box3().setFromObject(group); return { group, collider }; }
+        function createCoinModel() { const group = new THREE.Group(); const size = 0.5; const geo = new THREE.SphereGeometry(size, 16, 16); const mesh = new THREE.Mesh(geo, MATS.coin); mesh.castShadow = true; group.add(mesh); const collider = new THREE.Sphere(group.position, size * 1.2); return { group, collider }; }
+        function createWaterModel() { const group = new THREE.Group(); const size = 0.6; const geo = new THREE.SphereGeometry(size, 16, 16); const mesh = new THREE.Mesh(geo, MATS.water); group.add(mesh); const collider = new THREE.Sphere(group.position, size * 1.2); return { group, collider }; }
+
+        // --- World Generation and Update ---
+        function createGroundSegment(zPos) { // (Same as v9 - flat ground)
+            const groundGeo = new THREE.PlaneGeometry(LANE_WIDTH * 5, SEGMENT_LENGTH, 1, 1); const groundMat = new THREE.MeshStandardMaterial({ color: 0xdeb887, side: THREE.DoubleSide }); const ground = new THREE.Mesh(groundGeo, groundMat); ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0, zPos - SEGMENT_LENGTH / 2); ground.receiveShadow = true; scene.add(ground); groundSegments.push(ground);
+            // Spawn objects uses currentObjectSpawnProbability and obstacleRatio which increase over time
+            if (zPos < -SEGMENT_LENGTH && Math.random() < currentObjectSpawnProbability) spawnObject(zPos);
+            if (zPos < -SEGMENT_LENGTH && Math.random() < currentObjectSpawnProbability * (0.2 + obstacleRatio * 0.5)) { spawnObject(zPos); }
+        }
+        function spawnObject(segmentZPos) { // (Same as v9 - uses obstacleRatio)
+             const lane = LANES[Math.floor(Math.random() * LANES.length)]; const zPos = segmentZPos - Math.random() * SEGMENT_LENGTH * 0.8 - SEGMENT_LENGTH * 0.1; let objectTypeData; let modelData; const isObstacle = Math.random() < obstacleRatio; if (isObstacle) { objectTypeData = Math.random() < 0.5 ? OBSTACLE_TYPES.SCORPION : OBSTACLE_TYPES.SNAKE; } else { const collectibleRoll = Math.random(); if (collectibleRoll < WATER_INTERNAL_PROB) objectTypeData = COLLECTIBLE_TYPES.WATER; else if (collectibleRoll < WATER_INTERNAL_PROB + COIN_INTERNAL_PROB) objectTypeData = COLLECTIBLE_TYPES.COIN; else objectTypeData = COLLECTIBLE_TYPES.CAMEL; } modelData = objectTypeData.createFunc(); const objectGroup = modelData.group; const objectCollider = modelData.collider; let groundY = 0; objectGroup.position.set(lane, groundY, zPos); if(objectTypeData === COLLECTIBLE_TYPES.COIN || objectTypeData === COLLECTIBLE_TYPES.WATER) { objectGroup.position.y += 0.6; } else if (objectTypeData.type === 'obstacle' || objectTypeData.type === 'camel') { objectGroup.position.y = 0; } if (objectCollider instanceof THREE.Sphere) { objectCollider.center.copy(objectGroup.position); } scene.add(objectGroup); const objectInfo = { group: objectGroup, collider: objectCollider, type: objectTypeData.type, value: objectTypeData.value }; if (objectTypeData.type === 'obstacle') obstacles.push(objectInfo); else collectibles.push(objectInfo);
+        }
+        function updateGround() { // (Same as v9 - includes disposal)
+             if (!isGameRunning) return; const playerZ = playerGroup.position.z; const firstSegment = groundSegments[0]; if (firstSegment && firstSegment.position.z > playerZ + SEGMENT_LENGTH) { const recycledSegment = groundSegments.shift(); if(recycledSegment.geometry) recycledSegment.geometry.dispose(); scene.remove(recycledSegment); const lastSegmentZ = groundSegments.length > 0 ? groundSegments[groundSegments.length - 1].position.z : playerZ; createGroundSegment(lastSegmentZ - SEGMENT_LENGTH); } const cleanup = (arr) => arr.filter(obj => { if (!obj || !obj.group) return false; if (obj.group.position.z > playerZ + SEGMENT_LENGTH * 1.5) { disposeObject(obj); return false; } if (obj.collider instanceof THREE.Box3) { obj.collider.setFromObject(obj.group); } else if (obj.collider instanceof THREE.Sphere) { obj.collider.center.copy(obj.group.position); } return true; }); obstacles = cleanup(obstacles); collectibles = cleanup(collectibles);
+        }
+        const disposeObject = (obj) => { /* ... same ... */ if (!obj || !obj.group) return; try { obj.group.traverse(child => { if (child.isMesh) { if (child.geometry) child.geometry.dispose(); } }); scene.remove(obj.group); } catch(e) { console.error("Error disposing object:", e); } };
+
+        function updatePlayerCollider() { /* ... same ... */ const colliderSize = 0.85; const sledBox = new THREE.Box3().setFromObject(playerSled); const sledSize = new THREE.Vector3(); sledBox.getSize(sledSize); playerCollider.setFromCenterAndSize( playerGroup.position, new THREE.Vector3( sledSize.x * colliderSize, sledSize.y + 1.0, sledSize.z * colliderSize ) ); }
+        function checkCollisions() { /* ... same ... */ if (!isGameRunning || isFlashing) return; updatePlayerCollider(); for (let i = obstacles.length - 1; i >= 0; i--) { const obj = obstacles[i]; if (obj.collider instanceof THREE.Box3) { obj.collider.setFromObject(obj.group); } if (playerCollider.intersectsBox(obj.collider)) { handleObstacleCollision(obj, i); return; } } for (let i = collectibles.length - 1; i >= 0; i--) { const obj = collectibles[i]; let collision = false; if (obj.collider instanceof THREE.Sphere) { obj.collider.center.copy(obj.group.position); collision = playerCollider.intersectsSphere(obj.collider); } else if (obj.collider instanceof THREE.Box3) { obj.collider.setFromObject(obj.group); collision = playerCollider.intersectsBox(obj.collider); } if (collision) { handleCollectibleCollision(obj, i); } } }
+        function handleObstacleCollision(obstacle, index) { /* ... same ... */ console.log("Hit Obstacle!"); lives--; livesElement.textContent = lives; disposeObject(obstacle); obstacles.splice(index, 1); if (lives <= 0) { gameOver(); } else { flashPlayer(600); } }
+        let isFlashing = false; let flashIntervalId = null; function flashPlayer(duration) { /* ... same ... */ if (isFlashing) return; isFlashing = true; const interval = 100; let elapsed = 0; const originalVisible = playerGroup.visible; if (flashIntervalId) clearInterval(flashIntervalId); flashIntervalId = setInterval(() => { playerGroup.visible = !playerGroup.visible; elapsed += interval; if (elapsed >= duration) { clearInterval(flashIntervalId); flashIntervalId = null; playerGroup.visible = originalVisible; isFlashing = false; } }, interval); }
+        function handleCollectibleCollision(collectible, index) { /* ... same ... */ console.log("Collected:", collectible.type); switch (collectible.type) { case 'coin': score += collectible.value; scoreElement.textContent = score; break; case 'water': lives++; livesElement.textContent = lives; showMessage(`+1 Life!`, 1000); break; case 'camel': const skipDistance = collectible.value; groundSegments.forEach(g => g.position.z += skipDistance); obstacles.forEach(o => o.group.position.z += skipDistance); collectibles.forEach(c => c.group.position.z += skipDistance); playerGroup.position.z += skipDistance; showMessage(`Camel Skip! +${skipDistance}yds`, 1500); break; } disposeObject(collectible); collectibles.splice(index, 1); }
+        function showMessage(msg, duration = 2000) { /* ... same ... */ const tempMsg = document.createElement('div'); tempMsg.textContent = msg; tempMsg.style.position = 'absolute'; tempMsg.style.top = '80px'; tempMsg.style.left = '50%'; tempMsg.style.transform = 'translateX(-50%)'; tempMsg.style.padding = '10px 20px'; tempMsg.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'; tempMsg.style.color = 'white'; tempMsg.style.borderRadius = '8px'; tempMsg.style.zIndex = '100'; tempMsg.style.opacity = '1'; tempMsg.style.transition = 'opacity 0.5s ease ' + (duration / 1000 - 0.5) + 's'; document.body.appendChild(tempMsg); setTimeout(() => { tempMsg.style.opacity = '0'; setTimeout(() => { if (tempMsg.parentNode) { document.body.removeChild(tempMsg); } }, 500); }, duration); }
+
+        // --- Event Handlers --- // (Same)
+        function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+        function onKeyDown(event) { if (!isGameRunning || isGameOver) return; switch (event.key) { case 'ArrowLeft': case 'a': if (currentLaneIndex > 0) currentLaneIndex--; break; case 'ArrowRight': case 'd': if (currentLaneIndex < LANES.length - 1) currentLaneIndex++; break; } }
+
+        // --- Animation Loop Control --- // (Same)
+        function startAnimationLoop() { if (!animationFrameId) { animate(); } }
+        function stopAnimationLoop() { if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; } }
+
+        // --- Animation Loop ---
+        function animate() {
+            animationFrameId = requestAnimationFrame(animate);
+
+            try {
+                if (isGameRunning && !isGameOver) {
+                    const delta = clock.getDelta(); // Time since last frame in seconds
+                    const effectiveGameSpeed = gameSpeed * 60 * delta; // Base speed adjusted for frame rate
+
+                    // --- Progressive Difficulty Increase ---
+                    // Increase speed over time
+                    gameSpeed += SPEED_INCREASE_RATE * delta;
+
+                    // Increase object spawn probability over time (up to cap)
+                    if (currentObjectSpawnProbability < MAX_SPAWN_PROB) {
+                        currentObjectSpawnProbability += SPAWN_PROB_INCREASE_RATE * delta;
+                        // Clamp to max value just in case
+                        currentObjectSpawnProbability = Math.min(currentObjectSpawnProbability, MAX_SPAWN_PROB);
+                    }
+
+                    // Increase obstacle ratio over time (up to cap)
+                    if (obstacleRatio < MAX_OBSTACLE_RATIO) {
+                         obstacleRatio += OBSTACLE_RATIO_INCREASE_RATE * delta;
+                         // Clamp to max value
+                         obstacleRatio = Math.min(obstacleRatio, MAX_OBSTACLE_RATIO);
+                    }
+                    // --- End Progressive Difficulty ---
+
+
+                    // Player Movement & Distance
+                    playerGroup.position.z -= effectiveGameSpeed; // Use current gameSpeed
+                    distanceTraveled = Math.abs(playerGroup.position.z);
+                    distanceElement.textContent = distanceTraveled.toFixed(0);
+
+                    const targetX = LANES[currentLaneIndex];
+                    const moveSpeed = 12;
+                    playerGroup.position.x += (targetX - playerGroup.position.x) * moveSpeed * delta;
+                    playerGroup.position.y = PLAYER_BASE_Y; // Keep player Y constant
+
+                    // Camera
+                    camera.position.x = playerGroup.position.x;
+                    camera.position.y = playerGroup.position.y + 7;
+                    camera.position.z = playerGroup.position.z + 12;
+                    camera.lookAt(playerGroup.position.x, PLAYER_BASE_Y + 1.5, playerGroup.position.z - 2);
+
+                    // World Update
+                    updateGround();
+
+                    // Collision Check
+                    checkCollisions();
+                }
+
+                // Render
+                renderer.render(scene, camera);
+
+            } catch (error) {
+                console.error("ERROR in animation loop:", error);
+                gameOver(error); // Pass error to display
+            }
+        }
+
+        // --- Start the setup ---
+        window.onload = init;
+
+    </script>
+</body>
+</html>

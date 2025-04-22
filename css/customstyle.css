@@ -1,0 +1,113 @@
+/* General Styles */
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Open Sans', sans-serif;
+    background-color: #F4F1E1; /* A sandy background */
+    color: #333; /* Dark text for readability */
+}
+
+/* Custom Button Styles */
+.desert-button {
+    background-color: #D2B48C; /* Sandy tan */
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    font-size: 1rem;
+    border-radius: 8px;
+    margin: 5px;
+    transition: background-color 0.3s ease;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.desert-button:hover {
+    background-color: #c9a87a;
+    color: white;
+}
+
+/* Desert Heading Styles */
+.desert-heading {
+    font-family: 'Open Sans', sans-serif;
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #000000;
+    margin-top: 20px;
+    text-align: center;
+}
+
+/* Page Header Styles */
+.masthead {
+    background-size: cover;
+    background-position: center;
+    color: #fff;
+    padding: 5rem 0;
+    text-align: center;
+}
+
+.masthead h1 {
+    font-family: 'Lora', serif;
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+.masthead .subheading {
+    font-size: 1.25rem;
+}
+
+/* Content Section Styles */
+.section-heading {
+    font-family: 'Lora', serif;
+    font-size: 2rem;
+    color: #5A3D4D;
+    margin-top: 2rem;
+}
+
+ul {
+    list-style-type: square;
+    margin-left: 20px;
+}
+
+.img-fluid {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+/* Footer Styles */
+footer {
+    background-color: #D2B48C;
+    padding: 1rem 0;
+    color: #fff;
+}
+
+footer a {
+    color: #fff;
+    text-decoration: none;
+    margin: 0 10px;
+}
+
+footer a:hover {
+    color: #c9a87a;
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+    .masthead {
+        padding: 3rem 0;
+    }
+
+    .masthead h1 {
+        font-size: 2.5rem;
+    }
+
+    .masthead .subheading {
+        font-size: 1.1rem;
+    }
+
+    .section-heading {
+        font-size: 1.5rem;
+    }
+}
